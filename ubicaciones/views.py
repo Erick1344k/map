@@ -1,20 +1,25 @@
 from django.shortcuts import render
 import folium
+from folium.plugins import LocateControl
 
 def mapa_view(request):
-    # Centro del campus
+    # Centro UNEMI
     centro_unemi = [-2.1496, -79.6031]
 
-    # Mapa con OpenStreetMap, zoom máximo 21
+    # Crear mapa con ID fijo
     mapa = folium.Map(
         location=centro_unemi,
         zoom_start=19,
+        min_zoom=17,
         max_zoom=21,
         control_scale=True,
-        tiles='OpenStreetMap'
+        tiles='OpenStreetMap',
+        width='100%',
+        height='100%',
+        html_id='mapa-unemi'  # ID fijo para el mapa
     )
 
-    # === PUNTOS FIJOS DEL CAMPUS ===
+    # Marcadores fijos
     puntos = [
         {"nombre": "CRAI", "coordenadas": [-2.14970, -79.60325]},
         {"nombre": "Bloque M", "coordenadas": [-2.15035, -79.60345]},
@@ -28,161 +33,207 @@ def mapa_view(request):
     for punto in puntos:
         folium.Marker(
             location=punto["coordenadas"],
-            popup=punto["nombre"],
+            popup=folium.Popup(punto["nombre"], max_width=150),
             tooltip=punto["nombre"],
             icon=folium.Icon(color="blue", icon="info-sign")
         ).add_to(mapa)
 
-    # === JavaScript: GPS en tiempo real + botón visible + puntero con rotación ===
-    mapa.get_root().html.add_child(folium.Element("""
+    # Control de ubicación
+    LocateControl(
+        auto_start=False,
+        position='topright',
+        flyTo=True,
+        keepCurrentZoomLevel=True,
+        setView=True,
+        cacheLocation=True,
+        strings={
+            'title': 'Activar seguimiento',
+            'popup': 'Estás aquí'
+        },
+        locateOptions={
+            'enableHighAccuracy': True,
+            'watch': True,
+            'maximumAge': 0,
+            'timeout': 15000
+        }
+    ).add_to(mapa)
+
+    # JavaScript para inicialización, seguimiento y botón de ubicación
+    mapa.get_root().html.add_child(folium.Element('''
     <script>
-        let userMarker = null;
-        let userCircle = null;
-        let watchId = null;
+        document.addEventListener("DOMContentLoaded", function () {
+            console.log("Inicializando mapa...");
 
-        // SVG: Flecha azul tipo Google Maps
-        const arrowSvg = `
-            <svg width="34" height="34" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="17" cy="17" r="16" fill="#4285F4" stroke="white" stroke-width="3"/>
-                <path d="M17 6 L11 16 L17 13 L23 16 Z" fill="white" transform="translate(0, -1)"/>
-                <circle cx="17" cy="17" r="6" fill="white"/>
-                <circle cx="17" cy="17" r="4" fill="#1A73E8"/>
-            </svg>
-        `;
+            // Verificar que Leaflet está cargado
+            if (!window.L) {
+                console.error("Leaflet no está cargado");
+                alert("Error: Leaflet no está disponible. Revisa la consola.");
+                return;
+            }
 
-        const arrowIcon = L.divIcon({
-            html: arrowSvg,
-            className: "user-location-arrow",
-            iconSize: [34, 34],
-            iconAnchor: [17, 17]
-        });
+            // Buscar el contenedor del mapa
+            const mapContainer = document.getElementById('mapa-container');
+            if (!mapContainer) {
+                console.error("Contenedor #mapa-container no encontrado");
+                alert("Error: Contenedor #mapa-container no encontrado.");
+                return;
+            }
 
-        document.addEventListener('DOMContentLoaded', function() {
-            const map = window.map;
+            // Verificar o crear el div del mapa
+            let mapDiv = document.getElementById('mapa-unemi');
+            if (!mapDiv) {
+                console.log("Creando div del mapa...");
+                mapDiv = document.createElement('div');
+                mapDiv.id = 'mapa-unemi';
+                mapDiv.style.width = '100%';
+                mapDiv.style.height = '100%';
+                mapContainer.appendChild(mapDiv);
+            } else {
+                console.log("Mapa encontrado, ID: mapa-unemi");
+            }
 
-            // === BOTÓN GPS GRANDE Y VISIBLE ===
-            const gpsBtn = L.control({position: 'topleft'});
-            gpsBtn.onAdd = function(map) {
-                const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom');
-                div.style.cssText = `
-                    background: white;
-                    width: 40px;
-                    height: 40px;
-                    text-align: center;
-                    line-height: 40px;
-                    font-weight: bold;
-                    font-size: 18px;
-                    cursor: pointer;
-                    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-                    border-radius: 6px;
-                    margin: 10px;
-                    user-select: none;
-                `;
-                div.innerHTML = 'GPS';
-                div.title = 'Activar mi ubicación';
+            // Inicializar el mapa
+            let map;
+            try {
+                map = L.map('mapa-unemi', {
+                    center: [-2.1496, -79.6031],
+                    zoom: 19
+                });
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(map);
+                console.log("Mapa inicializado correctamente");
+            } catch (e) {
+                console.error("Error al inicializar el mapa: ", e);
+                alert("Error al inicializar el mapa: " + e.message);
+                return;
+            }
 
-                div.onclick = function(e) {
-                    L.DomEvent.stopPropagation(e);
-                    startTracking();
-                };
-
-                return div;
-            };
-            gpsBtn.addTo(map);
-
-            function startTracking() {
-                if (watchId) {
-                    // Si ya está activo, detener
-                    navigator.geolocation.clearWatch(watchId);
-                    watchId = null;
-                    if (userMarker) map.removeLayer(userMarker);
-                    if (userCircle) map.removeLayer(userCircle);
-                    return;
-                }
-
-                // Iniciar seguimiento
-                watchId = navigator.geolocation.watchPosition(
-                    function(position) {
-                        const lat = position.coords.latitude;
-                        const lng = position.coords.longitude;
-                        const accuracy = position.coords.accuracy;
-                        const heading = position.coords.heading !== null ? position.coords.heading : 0;
-                        const latlng = [lat, lng];
-
-                        // Eliminar marcador anterior
-                        if (userMarker) map.removeLayer(userMarker);
-                        if (userCircle) map.removeLayer(userCircle);
-
-                        // Marcador con rotación
-                        userMarker = L.marker(latlng, {
-                            icon: arrowIcon,
-                            rotationAngle: heading,
-                            rotationOrigin: 'center'
-                        }).addTo(map)
-                        .bindPopup(`Estás aquí<br>±${Math.round(accuracy)} m`)
-                        .openPopup();
-
-                        // Círculo de precisión
-                        userCircle = L.circle(latlng, {
-                            radius: accuracy,
-                            color: '#4285F4',
-                            fillColor: '#4285F4',
-                            fillOpacity: 0.15,
-                            weight: 2
-                        }).addTo(map);
-
-                        // Centrar solo si estás fuera del campus
-                        const campusBounds = L.latLngBounds([
-                            [-2.1515, -79.6045],
-                            [-2.1475, -79.6015]
-                        ]);
-                        if (!campusBounds.contains(latlng)) {
-                            map.setView(latlng, 21);
-                        }
+            // Agregar LocateControl manualmente
+            try {
+                L.control.locate({
+                    position: 'topright',
+                    flyTo: true,
+                    keepCurrentZoomLevel: true,
+                    setView: true,
+                    cacheLocation: true,
+                    strings: {
+                        title: 'Activar seguimiento',
+                        popup: 'Estás aquí'
                     },
-                    function(error) {
-                        let msg = 'Error GPS: ';
-                        if (error.code === 1) msg += 'Permiso denegado.';
-                        else if (error.code === 2) msg += 'Posición no disponible.';
-                        else if (error.code === 3) msg += 'Tiempo agotado.';
-                        else msg += error.message;
-                        alert(msg);
-                    },
-                    {
+                    locateOptions: {
                         enableHighAccuracy: true,
+                        watch: true,
                         maximumAge: 0,
                         timeout: 15000
                     }
-                );
+                }).addTo(map);
+                console.log("LocateControl añadido correctamente");
+            } catch (e) {
+                console.error("Error al añadir LocateControl: ", e);
+                alert("Error al añadir el control de ubicación: " + e.message);
+                return;
             }
 
-            // Detener al salir de la página
-            window.addEventListener('beforeunload', () => {
-                if (watchId) navigator.geolocation.clearWatch(watchId);
+            // Configurar botón de ubicación
+            let isFollowing = false;
+            let userMarker = null;
+            const locateBtn = document.querySelector('.leaflet-control-locate a');
+            if (!locateBtn) {
+                console.error("Botón de ubicación no encontrado");
+                alert("Error: Botón de ubicación no encontrado.");
+                return;
+            }
+
+            console.log("Botón de ubicación encontrado");
+            locateBtn.title = "Activar seguimiento de ubicación";
+
+            locateBtn.addEventListener('click', function () {
+                if (!isFollowing) {
+                    console.log("Activando seguimiento...");
+                    map.locate({
+                        watch: true,
+                        setView: true,
+                        maxZoom: 19,
+                        enableHighAccuracy: true
+                    });
+
+                    locateBtn.classList.add('active');
+                    locateBtn.title = "Detener seguimiento";
+                    isFollowing = true;
+
+                    map.on('locationfound', function (e) {
+                        console.log("Ubicación encontrada: ", e.latlng);
+                        if (userMarker) {
+                            userMarker.setLatLng(e.latlng);
+                        } else {
+                            userMarker = L.circleMarker(e.latlng, {
+                                radius: 8,
+                                fillColor: "#4285F4",
+                                color: "#4285F4",
+                                weight: 2,
+                                opacity: 1,
+                                fillOpacity: 0.6
+                            }).addTo(map).bindPopup("Estás aquí");
+                        }
+                        map.setView(e.latlng, 19);
+                    });
+
+                    map.on('locationerror', function (e) {
+                        console.error("Error de geolocalización: ", e.message);
+                        alert("No se pudo obtener la ubicación: " + e.message);
+                    });
+
+                } else {
+                    console.log("Desactivando seguimiento...");
+                    map.stopLocate();
+                    if (userMarker) {
+                        map.removeLayer(userMarker);
+                        userMarker = null;
+                    }
+                    locateBtn.classList.remove('active');
+                    locateBtn.title = "Activar seguimiento de ubicación";
+                    isFollowing = false;
+                }
             });
         });
     </script>
+    '''))
 
+    # Estilos personalizados
+    mapa.get_root().html.add_child(folium.Element('''
     <style>
-        .user-location-arrow svg {
-            filter: drop-shadow(0 1px 4px rgba(0,0,0,0.5));
-            transition: transform 0.2s ease-out;
+        .leaflet-control-locate a {
+            font-size: 20px !important;
+            width: 34px !important;
+            height: 34px !important;
+            line-height: 34px !important;
+            background-color: white !important;
+            border: 2px solid rgba(0,0,0,0.2) !important;
+            border-radius: 4px !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important;
+            transition: all 0.2s ease;
         }
-        .leaflet-control-custom {
-            margin: 10px !important;
+        .leaflet-control-locate a:hover {
+            background-color: #f4f4f4 !important;
+        }
+        .leaflet-control-locate.active a {
+            background-color: #4285F4 !important;
+            color: white !important;
         }
         .leaflet-popup-content {
             font-family: 'Roboto', sans-serif;
-            text-align: center;
-            margin: 8px;
             font-size: 14px;
+            text-align: center;
         }
-        .leaflet-popup-content-wrapper {
-            border-radius: 12px;
+        #mapa-container, #mapa-container > div {
+            width: 100% !important;
+            height: 100% !important;
         }
     </style>
-    """))
+    '''))
 
-    # Renderizar el mapa
-    mapa = mapa._repr_html_()
-    return render(request, 'ubicaciones/mapa.html', {'mapa': mapa})
+    # Renderizar sin iframe
+    mapa_html = mapa.get_root().render()
+
+    return render(request, 'ubicaciones/mapa.html', {'mapa_html': mapa_html})

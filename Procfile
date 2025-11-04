@@ -1,1 +1,0 @@
-web: gunicorn mapa.wsgi

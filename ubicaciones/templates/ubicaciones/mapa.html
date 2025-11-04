@@ -3,18 +3,19 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mapa UNEMI - Mi Ubicación</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mapa UNEMI - Seguimiento en Vivo</title>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; }
-        html, body { height: 100%; font-family: 'Roboto', sans-serif; }
-        #mapa { height: 100vh; width: 100%; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; font-family: 'Roboto', sans-serif; overflow: hidden; }
+        #mapa-container { height: 100vh; width: 100%; }
     </style>
 </head>
 <body>
-    <div id="mapa">
-        {{ mapa|safe }}
-    </div>
+    <div id="mapa-container"></div>
+
+    <!-- Inyectar el mapa completo (sin iframe) -->
+    {{ mapa_html|safe }}
 </body>
 </html>
